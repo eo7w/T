@@ -3,6 +3,7 @@ import telebot
 from openai import OpenAI
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from duckduckgo_search import DDGS
 
 # ==========================================
 # 🔑 إعدادات البيئة
@@ -17,7 +18,7 @@ TELEGRAM_BOT_TOKEN = os.getenv(
 # مفتاح NVIDIA API
 NVIDIA_API_KEY = os.getenv(
     "NVIDIA_API_KEY",
-    "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"
+    "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"
 )
 
 # رابط واجهة NVIDIA NIM
@@ -28,13 +29,13 @@ ALLOWED_CHAT_IDS_STR = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "8952278702")
 ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") if x.strip())
 
 # الموديل الافتراضي
-MODEL_NAME = os.getenv("MODEL_NAME", "meta/muse-glimmer-30b")
+MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 
 # ==========================================
 # تهيئة العملاء
 # ==========================================
 
-app = FastAPI(title="AI Chat + Telegram Bot")
+app = FastAPI(title="AI Chat + Telegram Bot with Web Search")
 
 # تهيئة بوت تيليجرام
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
@@ -45,6 +46,18 @@ client = OpenAI(
     api_key=NVIDIA_API_KEY
 )
 
+# دالة البحث في الويب
+def search_web(query: str, max_results: int = 3) -> str:
+    try:
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                results.append(f"العنوان: {r.get('title', '')}\nالمحتوى: {r.get('body', '')}\nالرابط: {r.get('href', '')}")
+        return "\n\n".join(results)
+    except Exception as e:
+        print(f"Search error: {e}")
+        return ""
+
 # ==========================================
 # واجهة الويب
 # ==========================================
@@ -54,8 +67,8 @@ async def root():
     return """
     <html>
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-            <h1>✅ AI Chat Bot — يعمل بنجاح</h1>
-            <p>بوت تيليجرام نشط ويعمل</p>
+            <h1>✅ AI Chat Bot — يعمل بنجاح مع خاصية البحث</h1>
+            <p>بوت تيليجرام نشط ومزود بمحرك بحث الويب</p>
         </body>
     </html>
     """
@@ -73,7 +86,7 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً! أرسل لي أي سؤال وسأجيب لك باستخدام الذكاء الاصطناعي.")
+    bot.reply_to(message, "👋 أهلاً! أرسل لي أي سؤال وسأبحث في الويب وأجيبك باستخدام الذكاء الاصطناعي.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -82,14 +95,40 @@ def handle_message(message):
         return
 
     try:
+        # إرسال إشعار للمستخدم بأن البوت يبحث
+        status_msg = bot.reply_to(message, "🔍 جاري البحث في الويب وإعداد الإجابة...")
+
+        # البحث في الويب
+        search_data = search_web(message.text)
+
+        # تجهيز الرسائل للذكاء الاصطناعي
+        messages = [
+            {
+                "role": "system",
+                "content": "أنت مساعد ذكاء اصطناعي متقدم. استخدم نتائج البحث المرفقة للإجابة عن أسئلة المستخدم بدقة وتنسيق ممتاز باللغة العربية."
+            }
+        ]
+
+        if search_data:
+            messages.append({
+                "role": "system",
+                "content": f"نتائج البحث الأخيرة من الويب حول سؤال المستخدم:\n{search_data}"
+            })
+
+        messages.append({"role": "user", "content": message.text})
+
+        # طلب الإجابة من الذكاء الاصطناعي
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[{"role": "user", "content": message.text}],
-            temperature=0.7,
+            messages=messages,
+            temperature=0.5,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
-        bot.reply_to(message, answer)
+
+        # تعديل الرسالة المؤقتة بنص الإجابة النهائي
+        bot.edit_message_text(answer, chat_id=message.chat.id, message_id=status_msg.message_id)
+
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في الاتصال بالذكاء الاصطناعي:\n{str(e)}")
 

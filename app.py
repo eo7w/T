@@ -1,9 +1,11 @@
 import os
+import re
+import urllib.request
+import urllib.parse
 import telebot
 from openai import OpenAI
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from duckduckgo_search import DDGS
 
 # ==========================================
 # 🔑 إعدادات البيئة
@@ -46,14 +48,29 @@ client = OpenAI(
     api_key=NVIDIA_API_KEY
 )
 
-# دالة البحث في الويب
+# دالة البحث المباشر في الويب (بدون مكتبات خارجية)
 def search_web(query: str, max_results: int = 3) -> str:
     try:
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                results.append(f"العنوان: {r.get('title', '')}\nالمحتوى: {r.get('body', '')}\nالرابط: {r.get('href', '')}")
-        return "\n\n".join(results)
+        url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({'q': query})
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        with urllib.request.urlopen(req, timeout=8) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            titles = re.findall(r'<a class="result__a"[^>]*>(.*?)</a>', html, re.DOTALL)
+            snippets = re.findall(r'<a class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
+            
+            clean_titles = [re.sub(r'<[^>]+>', '', t).strip() for t in titles]
+            clean_snippets = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets]
+            
+            results = []
+            for i in range(min(max_results, len(clean_snippets))):
+                title = clean_titles[i] if i < len(clean_titles) else ""
+                snippet = clean_snippets[i]
+                results.append(f"العنوان: {title}\nالمحتوى: {snippet}")
+                
+            return "\n\n".join(results)
     except Exception as e:
         print(f"Search error: {e}")
         return ""

@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 # توكن بوت تيليجرام
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN",
-    "8600637689:AAFf5DKGXfCPmeFXmiZTC_-3pinNxFxfbpU"
+    "8902642942:AAHbLDB1iC7qLrEBLeuG-pk3rR_GlUbpgOk"
 )
 
 # مفتاح NVIDIA API

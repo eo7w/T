@@ -39,7 +39,7 @@ app = FastAPI(title="AI Chat + Telegram Bot")
 # تهيئة بوت تيليجرام
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 
-# تهيئة عميل NVIDIA — ✅ تمت إزالة المعامل 'proxies' الذي كان يسبب الخطأ
+# تهيئة عميل NVIDIA
 client = OpenAI(
     base_url=BASE_URL,
     api_key=NVIDIA_API_KEY

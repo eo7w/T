@@ -30,17 +30,19 @@ ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") i
 MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 
 # ==========================================
-# تهيئة العملاء والذاكرة الموسعة
+# تهيئة العملاء بدون قيود parse_mode
 # ==========================================
 
-app = FastAPI(title="AI Chat + Trading Bot with Live Spot Prices")
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
+app = FastAPI(title="AI Chat + Trading Bot")
+
+# إزالة parse_mode لضمان عدم رفض الرسائل من تيليجرام
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 
 chat_histories = {}
 
 # ==========================================
-# جلب أسعار الأسواق المباشرة الفورية (Spot Prices)
+# جلب أسعار الأسواق المباشرة الفورية (Spot)
 # ==========================================
 
 def get_live_market_price(query: str) -> str:
@@ -48,26 +50,22 @@ def get_live_market_price(query: str) -> str:
     symbol = None
     name = ""
 
-    # الذهب والمعادن الفورية (Spot)
     if any(k in query_lower for k in ["xau", "xauusd", "ذهب", "gold"]):
         symbol, name = "XAUUSD=X", "الذهب الفوري (XAU/USD)"
     elif any(k in query_lower for k in ["فضة", "silver", "xag"]):
         symbol, name = "XAGUSD=X", "الفضة الفورية (XAG/USD)"
     elif any(k in query_lower for k in ["نفط", "oil", "crude", "brent"]):
         symbol, name = "CL=F", "النفط الخام (WTI)"
-    # العملات الرقمية
     elif any(k in query_lower for k in ["btc", "bitcoin", "بيتكوين"]):
         symbol, name = "BTC-USD", "البيتكوين (BTC/USD)"
     elif any(k in query_lower for k in ["eth", "ethereum", "ايثريوم"]):
         symbol, name = "ETH-USD", "الإيثريوم (ETH/USD)"
-    # الفوركس
     elif any(k in query_lower for k in ["eurusd", "يورو"]):
         symbol, name = "EURUSD=X", "اليورو مقابل الدولار (EUR/USD)"
     elif any(k in query_lower for k in ["gbpusd", "باوند"]):
         symbol, name = "GBPUSD=X", "الباوند مقابل الدولار (GBP/USD)"
     elif any(k in query_lower for k in ["usdjpy", "ين"]):
         symbol, name = "USDJPY=X", "الدولار مقابل الين (USD/JPY)"
-    # المؤشرات والأسهم
     elif any(k in query_lower for k in ["us30", "dow", "داو"]):
         symbol, name = "^DJI", "مؤشر الداوجونز (US30)"
     elif any(k in query_lower for k in ["nasdaq", "ناسداك", "us100"]):
@@ -117,13 +115,7 @@ def search_web(query: str, max_results: int = 3) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return """
-    <html>
-        <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-            <h1>✅ AI Chat Bot — يعمل بالأسعار الفورية اللحظية (Spot)</h1>
-        </body>
-    </html>
-    """
+    return "<html><body><h1>✅ AI Chat Bot Active</h1></body></html>"
 
 @app.get("/health")
 async def health():
@@ -138,7 +130,7 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً بك! أنا أقرأ أسعار الذهب الفوري (Spot) ومختلف الأسواق لحظياً.\nأرسل /clear لمسح الذاكرة.")
+    bot.reply_to(message, "👋 أهلاً بك! أنا جاهز لمساعدتك في التداول والإجابة عن أسئلتك.\nأرسل /clear لمسح الذاكرة.")
 
 @bot.message_handler(commands=["clear", "reset"])
 def clear_memory(message):
@@ -154,8 +146,9 @@ def handle_message(message):
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
 
+    status_msg = None
     try:
-        status_msg = bot.reply_to(message, "💬 جاري التفكير وجلب السعر اللحظي...")
+        status_msg = bot.reply_to(message, "💬 جاري المعالجة والتحليل...")
 
         history = chat_histories.get(chat_id, [])
 
@@ -168,9 +161,8 @@ def handle_message(message):
         search_data = search_web(search_query)
 
         system_prompt = (
-            "أنت مساعد ذكاء اصطناعي ومحلل تداول محترف.\n"
-            "تلتزم ببيانات السعر المباشر المرفقة أدناه كمرجع أساسي ودقيق لسعر السوق الحالي.\n"
-            "عند تقديم توصية صفقات، يجب بناء نقاط الدخول والهدف ووقف الخسارة بناءً على السعر اللحظي المرفق بالضبط."
+            "أنت مساعد ذكاء اصطناعي ومحلل تداول محترف وصديق شخصي للمستخدم.\n"
+            "قدم توصيات صفقات واضحة تشمل (دخول، أهداف، وقف خسارة) بناءً على السعر المباشر المرفق."
         )
 
         messages_payload = [{"role": "system", "content": system_prompt}]
@@ -187,19 +179,42 @@ def handle_message(message):
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_payload,
-            temperature=0.3,
+            temperature=0.4,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
 
         history.append({"role": "user", "content": message.text})
         history.append({"role": "assistant", "content": answer})
-        chat_histories[chat_id] = history[-50:]
+        chat_histories[chat_id] = history[-30:]
 
-        bot.edit_message_text(answer, chat_id=chat_id, message_id=status_msg.message_id)
+        if status_msg:
+            bot.edit_message_text(answer, chat_id=chat_id, message_id=status_msg.message_id)
+        else:
+            bot.reply_to(message, answer)
 
     except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في الاتصال بالذكاء الاصطناعي:\n{str(e)}")
+        error_text = f"❌ حدث خطأ أثناء المعالجة:\n{str(e)}"
+        if status_msg:
+            bot.edit_message_text(error_text, chat_id=chat_id, message_id=status_msg.message_id)
+        else:
+            bot.reply_to(message, error_text)
+
+# ==========================================
+# تشغيل البوت
+# ==========================================
+
+@app.on_event("startup")
+async def startup_event():
+    import threading
+    def run_bot():
+        try:
+            bot.infinity_polling(timeout=20)
+        except Exception as e:
+            print(f"Bot polling error: {e}")
+    thread = threading.Thread(target=run_bot, daemon=True)
+    thread.start()
+    print("✅ Telegram Bot started")
 
 if __name__ == "__main__":
     import uvicorn

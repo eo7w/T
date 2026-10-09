@@ -1,15 +1,103 @@
 import os
+import time
+import threading
+import requests
 from flask import Flask, request, jsonify, render_template_string
 from openai import OpenAI
 
 app = Flask(__name__)
 
-# اقرأ المفتاح والـ base_url من متغيرات البيئة (Render dashboard)
+# --- إعدادات NVIDIA (من متغيرات البيئة في Render) ---
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 BASE_URL = os.environ.get("BASE_URL", "https://integrate.api.nvidia.com/v1")
 MODEL = os.environ.get("MODEL", "meta/muse-glimmer-30b")
 
+# --- إعدادات تيليجرام ---
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+# قائمة المحادثات المسموح لها (افتراضياً هويتك فقط)، يمكن تجاوزها عبر ENV
+_default_ids = os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "8952278702")
+ALLOWED_CHAT_IDS = {x.strip() for x in _default_ids.split(",") if x.strip()}
+
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
+
+
+def ai_reply(message: str) -> str:
+    """إرسال رسالة إلى نموذج NVIDIA وإرجاع الرد."""
+    completion = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": message}],
+        temperature=1,
+        top_p=0.95,
+        max_tokens=8192,
+        stream=False,
+    )
+    return completion.choices[0].message.content
+
+
+def tg_send(chat_id, text):
+    """إرسال رسالة نصية إلى تيليجرام مقسمة إذا كانت طويلة."""
+    api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    chunk = 4000
+    for i in range(0, len(text), chunk):
+        requests.post(
+            f"{api}/sendMessage",
+            json={"chat_id": chat_id, "text": text[i:i + chunk]},
+            timeout=15,
+        )
+
+
+def telegram_poll():
+    """حلقة استقبال رسائل تيليجرام (Long Polling) في خلفية التطبيق."""
+    api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    offset = None
+    # مسح أي webhook سابق لتفعيل الـ polling
+    try:
+        requests.post(f"{api}/deleteWebhook", timeout=10)
+    except Exception:
+        pass
+    while True:
+        try:
+            r = requests.post(
+                f"{api}/getUpdates",
+                json={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                timeout=40,
+            )
+            data = r.json()
+            if not data.get("ok"):
+                time.sleep(5)
+                continue
+            for upd in data.get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message")
+                if not msg or "text" not in msg:
+                    continue
+                chat_id = str(msg["chat"]["id"])
+                user_text = msg["text"]
+
+                # التحقق من الهوية المسموح لها
+                if chat_id not in ALLOWED_CHAT_IDS:
+                    tg_send(chat_id, "عذراً، غير مصرح لك باستخدام هذا البوت.")
+                    continue
+
+                # مؤشر "يكتب..." أثناء المعالجة
+                requests.post(
+                    f"{api}/sendChatAction",
+                    json={"chat_id": chat_id, "action": "typing"},
+                    timeout=10,
+                )
+                try:
+                    answer = ai_reply(user_text)
+                except Exception as e:
+                    answer = f"حدث خطأ: {e}"
+                tg_send(chat_id, answer)
+        except Exception:
+            time.sleep(5)
+
+
+# تشغيل البوت في خلفية التطبيق إذا كان التوكن مُعداً
+if TELEGRAM_BOT_TOKEN:
+    threading.Thread(target=telegram_poll, daemon=True).start()
+
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -94,32 +182,26 @@ def home():
     return render_template_string(HTML_PAGE, model=MODEL)
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "telegram": bool(TELEGRAM_BOT_TOKEN)})
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     if not NVIDIA_API_KEY:
         return jsonify({"error": "NVIDIA_API_KEY غير مُعد. أضفه في إعدادات Render."}), 500
-
     data = request.get_json(force=True)
     message = (data.get("message") or "").strip()
     if not message:
         return jsonify({"error": "الرسالة فارغة"}), 400
-
     try:
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": message}],
-            temperature=1,
-            top_p=0.95,
-            max_tokens=8192,
-            stream=False,
-        )
-        reply = completion.choices[0].message.content
+        reply = ai_reply(message)
         return jsonify({"reply": reply})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    # Render يستخدم متغير PORT تلقائياً
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)

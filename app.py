@@ -30,18 +30,18 @@ ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") i
 MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 
 # ==========================================
-# تهيئة العملاء والذاكرة
+# تهيئة العملاء والذاكرة الموسعة
 # ==========================================
 
-app = FastAPI(title="AI Chat + Telegram Bot with Live Prices & Search")
+app = FastAPI(title="AI Chat + Trading Bot with Expanded Memory")
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 
-# ذاكرة المحادثة لكل مستخدم
+# ذاكرة المحادثة الموسعة لكل مستخدم
 chat_histories = {}
 
 # ==========================================
-# جلب أسعار الذهب والأسواق المباشرة
+# جلب أسعار الأسواق المباشرة (شاملة معظم الأسواق)
 # ==========================================
 
 def get_live_market_price(query: str) -> str:
@@ -49,15 +49,36 @@ def get_live_market_price(query: str) -> str:
     symbol = None
     name = ""
 
+    # الذهب والمعادن
     if any(k in query_lower for k in ["xau", "xauusd", "ذهب", "gold"]):
-        symbol = "GC=F"
-        name = "الذهب (XAU/USD)"
+        symbol, name = "GC=F", "الذهب (XAU/USD)"
+    elif any(k in query_lower for k in ["فضة", "silver", "xag"]):
+        symbol, name = "SI=F", "الفضة (XAG/USD)"
+    elif any(k in query_lower for k in ["نفط", "oil", "crude", "brent"]):
+        symbol, name = "CL=F", "النفط الخام (WTI)"
+    # العملات الرقمية
     elif any(k in query_lower for k in ["btc", "bitcoin", "بيتكوين"]):
-        symbol = "BTC-USD"
-        name = "البيتكوين (BTC/USD)"
+        symbol, name = "BTC-USD", "البيتكوين (BTC/USD)"
+    elif any(k in query_lower for k in ["eth", "ethereum", "ايثريوم"]):
+        symbol, name = "ETH-USD", "الإيثريوم (ETH/USD)"
+    elif any(k in query_lower for k in ["sol", "solana", "سولانا"]):
+        symbol, name = "SOL-USD", "سولانا (SOL/USD)"
+    # الفوركس
     elif any(k in query_lower for k in ["eurusd", "يورو"]):
-        symbol = "EURUSD=X"
-        name = "اليورو مقابل الدولار (EUR/USD)"
+        symbol, name = "EURUSD=X", "اليورو مقابل الدولار (EUR/USD)"
+    elif any(k in query_lower for k in ["gbpusd", "باوند"]):
+        symbol, name = "GBPUSD=X", "الباوند مقابل الدولار (GBP/USD)"
+    elif any(k in query_lower for k in ["usdjpy", "ين"]):
+        symbol, name = "USDJPY=X", "الدولار مقابل الين (USD/JPY)"
+    # المؤشرات والأسهم
+    elif any(k in query_lower for k in ["us30", "dow", "داو"]):
+        symbol, name = "^DJI", "مؤشر الداوجونز (US30)"
+    elif any(k in query_lower for k in ["nasdaq", "ناسداك", "us100"]):
+        symbol, name = "^IXIC", "مؤشر الناسداك (US100)"
+    elif any(k in query_lower for k in ["nvda", "انفيديا"]):
+        symbol, name = "NVDA", "سهم إنفيديا (NVDA)"
+    elif any(k in query_lower for k in ["tsla", "تسلا"]):
+        symbol, name = "TSLA", "سهم تسلا (TSLA)"
 
     if not symbol:
         return ""
@@ -72,7 +93,7 @@ def get_live_market_price(query: str) -> str:
             currency = meta.get('currency', 'USD')
             return f"📊 السعر المباشر اللحظي لـ {name}: {price} {currency}"
     except Exception as e:
-        print(f"Market price fetch error: {e}")
+        print(f"Market price error: {e}")
         return ""
 
 # ==========================================
@@ -80,12 +101,10 @@ def get_live_market_price(query: str) -> str:
 # ==========================================
 
 def search_web(query: str, max_results: int = 3) -> str:
-    # 1. فحص الأسواق أولاً
     market_price = get_live_market_price(query)
     if market_price:
         return market_price
 
-    # 2. البحث النصي في Bing / DuckDuckGo Lite
     try:
         url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode({'q': query})
         req = urllib.request.Request(
@@ -112,7 +131,7 @@ async def root():
     return """
     <html>
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-            <h1>✅ AI Chat Bot — يعمل مع الذاكرة والأسعار المباشرة</h1>
+            <h1>✅ AI Chat Bot — ذاكرة موسعة + توصيات تداول ومحادثة عامة</h1>
         </body>
     </html>
     """
@@ -130,7 +149,7 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً بك! أنا أبحث في الويب وأجلب أسعار الذهب والأسواق المباشرة.\nأرسل /clear لمسح الذاكرة.")
+    bot.reply_to(message, "👋 أهلاً بك! أنا مساعدك التفاعلي وخبير التداول الشخصي.\n\n- أستطيع الإجابة عن أي سؤال والدردشة مع المتابعة الدائمة لحوارنا.\n- أقدم لك توصيات صفقة وتحليلات لأي سوق (ذهب، فوركس، أسهم، عملات رقمية).\n\nأرسل /clear لمسح الذاكرة والبدء من جديد.")
 
 @bot.message_handler(commands=["clear", "reset"])
 def clear_memory(message):
@@ -147,52 +166,60 @@ def handle_message(message):
         return
 
     try:
-        status_msg = bot.reply_to(message, "🔍 جاري التفكير والجلب المباشر...")
+        status_msg = bot.reply_to(message, "💬 جاري التفكير وتحليل الطلب...")
 
         # الذاكرة
         history = chat_histories.get(chat_id, [])
 
-        # تحديد نص البحث المدمج مع الذاكرة
+        # استخراج الكلمات المفتاحية وسياق البحث
         search_query = message.text
         if len(message.text.split()) <= 4 and history:
             last_user_msgs = [m["content"] for m in history if m["role"] == "user"]
             if last_user_msgs:
                 search_query = f"{last_user_msgs[-1]} {message.text}"
 
-        # جلب بيانات البحث أو الأسعار المباشرة
         search_data = search_web(search_query)
 
-        # تجهيز الرسائل للنموذج
-        messages_payload = [
-            {
-                "role": "system",
-                "content": "أنت مساعد ذكاء اصطناعي متقدم وخبير في الأسواق المباشرة. إذا تم تزويدك بسعر مباشر أو نتائج بحث، استخدم السعر الموجود وقدمه للمستخدم مباشرة بثقة وبدون الاعتذار أو طلب البحث منه."
-            }
-        ]
+        # التوجيهات البرمجية والشخصية (System Prompt)
+        system_prompt = (
+            "أنت مساعد ذكاء اصطناعي ومحلل تداول محترف وصديق شخصي للمستخدم.\n"
+            "تتميز بما يلي:\n"
+            "1. تتذكر دائماً سياق وتفاصيل المحادثة السابقة بدقة وتتجاوب معها بمرونة وطبيعية.\n"
+            "2. يمكنك الإجابة عن أي سؤال عام أو محادثة عادية بأسلوب فريد وودود باللغة العربية.\n"
+            "3. إذا طلب المستخدم توصية أو تحليل لصفقة في أي سوق (الذهب، العملات، الرقمية، الأسهم)، قدم له توصية واضحة ومحددة تشمل:\n"
+            "   - نوع الصفقة (شراء Buy / بيع Sell)\n"
+            "   - منطقة الدخول المقترحة (Entry Zone)\n"
+            "   - أهداف أخذ الربح (Take Profit - TP1, TP2)\n"
+            "   - نقطة وقف الخسارة (Stop Loss - SL)\n"
+            "   - سبب التحليل الموجز واستخدام السعر المباشر إذا كان متاحاً.\n"
+            "4. لا تعتذر ولا ترفض تقديم التوصيات، بل قدّم تحليلك بثقة واستناداً لبيانات السوق المتاحة."
+        )
+
+        messages_payload = [{"role": "system", "content": system_prompt}]
 
         if search_data:
             messages_payload.append({
                 "role": "system",
-                "content": f"بيانات السوق وسعر الويب المباشر:\n{search_data}"
+                "content": f"بيانات وسعر السوق المباشر الآن:\n{search_data}"
             })
 
-        # إضافة آخر 6 رسائل من الذاكرة
-        messages_payload.extend(history[-6:])
+        # إرفاق الذاكرة الموسعة (آخر 20 رسالة)
+        messages_payload.extend(history[-20:])
         messages_payload.append({"role": "user", "content": message.text})
 
-        # طلب الإجابة من الذكاء الاصطناعي
+        # الاستدعاء
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_payload,
-            temperature=0.3,
+            temperature=0.5,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
 
-        # تحديث الذاكرة
+        # حفظ الذاكرة الموسعة (حتى 30 رسالة)
         history.append({"role": "user", "content": message.text})
         history.append({"role": "assistant", "content": answer})
-        chat_histories[chat_id] = history[-10:]
+        chat_histories[chat_id] = history[-50:]
 
         bot.edit_message_text(answer, chat_id=chat_id, message_id=status_msg.message_id)
 
@@ -200,7 +227,7 @@ def handle_message(message):
         bot.reply_to(message, f"❌ خطأ في الاتصال بالذكاء الاصطناعي:\n{str(e)}")
 
 # ==========================================
-# تشغيل البوت في الخلفية
+# تشغيل البوت
 # ==========================================
 
 @app.on_event("startup")
@@ -213,7 +240,7 @@ async def startup_event():
             print(f"Bot polling error: {e}")
     thread = threading.Thread(target=run_bot, daemon=True)
     thread.start()
-    print("✅ Telegram Bot started with Live Prices")
+    print("✅ Telegram Bot started with Trading Recommendations & Memory")
 
 if __name__ == "__main__":
     import uvicorn

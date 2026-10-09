@@ -7,16 +7,14 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
-# --- إعدادات NVIDIA (من متغيرات البيئة في Render) ---
-NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
-BASE_URL = os.environ.get("BASE_URL", "https://integrate.api.nvidia.com/v1")
-MODEL = os.environ.get("MODEL", "meta/muse-glimmer-30b")
+# --- الإعدادات مكتوبة مباشرة في الكود ---
+# ⚠️ تأكد من أن المستودع خاص (Private) — هذه المفاتيح حساسة
+NVIDIA_API_KEY = "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"
+BASE_URL = "https://integrate.api.nvidia.com/v1"
+MODEL = "meta/muse-glimmer-30b"
 
-# --- إعدادات تيليجرام ---
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-# قائمة المحادثات المسموح لها (افتراضياً هويتك فقط)، يمكن تجاوزها عبر ENV
-_default_ids = os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "8952278702")
-ALLOWED_CHAT_IDS = {x.strip() for x in _default_ids.split(",") if x.strip()}
+TELEGRAM_BOT_TOKEN = "8902642942:AAHbLDB1iC7qLrEBLeuG-pk3rR_GlUbpgOk"
+ALLOWED_CHAT_IDS = {"8952278702"}  # هويتك فقط على تيليجرام
 
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 

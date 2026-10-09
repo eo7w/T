@@ -17,7 +17,7 @@ TELEGRAM_BOT_TOKEN = os.getenv(
 # مفتاح NVIDIA API
 NVIDIA_API_KEY = os.getenv(
     "NVIDIA_API_KEY",
-    "nvapi-your-key-here"
+    "Nvapi-SVxwZ2MELIdKg-YUe2mbwCKKWvySy_iy-rEMbSaN0wo7_nPh-zd8XVsJbjtfnqC5"
 )
 
 # رابط واجهة NVIDIA NIM

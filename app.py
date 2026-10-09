@@ -39,7 +39,7 @@ app = FastAPI(title="AI Chat + Telegram Bot")
 # تهيئة بوت تيليجرام
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 
-# تهيئة عميل NVIDIA
+# تهيئة عميل NVIDIA (تم التأكد من عدم وجود معامل proxies)
 client = OpenAI(
     base_url=BASE_URL,
     api_key=NVIDIA_API_KEY

@@ -11,44 +11,35 @@ from fastapi.responses import HTMLResponse, JSONResponse
 # 🔑 إعدادات البيئة
 # ==========================================
 
-# توكن بوت تيليجرام
 TELEGRAM_BOT_TOKEN = os.getenv(
     "TELEGRAM_BOT_TOKEN",
     "8902642942:AAHbLDB1iC7qLrEBLeuG-pk3rR_GlUbpgOk"
 )
 
-# مفتاح NVIDIA API
 NVIDIA_API_KEY = os.getenv(
     "NVIDIA_API_KEY",
     "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"
 )
 
-# رابط واجهة NVIDIA NIM
 BASE_URL = os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1")
 
-# قائمة المعرفات المسموح لها بالاستخدام
 ALLOWED_CHAT_IDS_STR = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "8952278702")
 ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") if x.strip())
 
-# الموديل الافتراضي
 MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 
 # ==========================================
-# تهيئة العملاء
+# تهيئة العملاء والذاكرة
 # ==========================================
 
-app = FastAPI(title="AI Chat + Telegram Bot with Web Search")
-
-# تهيئة بوت تيليجرام
+app = FastAPI(title="AI Chat + Telegram Bot with Memory & Search")
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
+client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 
-# تهيئة عميل NVIDIA
-client = OpenAI(
-    base_url=BASE_URL,
-    api_key=NVIDIA_API_KEY
-)
+# قاموس لحفظ ذاكرة المحادثة لكل مستخدم
+chat_histories = {}
 
-# دالة البحث المباشر في الويب (بدون مكتبات خارجية)
+# دالة البحث في الويب
 def search_web(query: str, max_results: int = 3) -> str:
     try:
         url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({'q': query})
@@ -84,8 +75,7 @@ async def root():
     return """
     <html>
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-            <h1>✅ AI Chat Bot — يعمل بنجاح مع خاصية البحث</h1>
-            <p>بوت تيليجرام نشط ومزود بمحرك بحث الويب</p>
+            <h1>✅ AI Chat Bot — يعمل مع الذاكرة والبحث</h1>
         </body>
     </html>
     """
@@ -103,54 +93,80 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً! أرسل لي أي سؤال وسأبحث في الويب وأجيبك باستخدام الذكاء الاصطناعي.")
+    bot.reply_to(message, "👋 أهلاً بك! أنا مزود بذاكرة تترابط مع محادثاتنا ومحرك بحث للويب.\nأرسل /clear لمسح الذاكرة وتغيير الموضوع.")
+
+@bot.message_handler(commands=["clear", "reset"])
+def clear_memory(message):
+    chat_id = message.chat.id
+    if chat_id in chat_histories:
+        chat_histories[chat_id] = []
+    bot.reply_to(message, "🧹 تم مسح الذاكرة وبدء محادثة جديدة!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    if message.chat.id not in ALLOWED_CHAT_IDS:
+    chat_id = message.chat.id
+    if chat_id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
 
     try:
-        # إرسال إشعار للمستخدم بأن البوت يبحث
-        status_msg = bot.reply_to(message, "🔍 جاري البحث في الويب وإعداد الإجابة...")
+        status_msg = bot.reply_to(message, "🔍 جاري التفكير والبحث...")
 
-        # البحث في الويب
-        search_data = search_web(message.text)
+        # الحصول على ذاكرة المستخدم الحالية
+        history = chat_histories.get(chat_id, [])
 
-        # تجهيز الرسائل للذكاء الاصطناعي
-        messages = [
+        # تحديد جملة البحث: إذا كانت الرسالة قصيرة، يتم إرفاق آخر موضوع تحدث عنه
+        search_query = message.text
+        if len(message.text.split()) <= 5 and history:
+            last_user_msgs = [m["content"] for m in history if m["role"] == "user"]
+            if last_user_msgs:
+                search_query = f"{last_user_msgs[-1]} {message.text}"
+
+        # إجراء البحث في الويب
+        search_data = search_web(search_query)
+
+        # تجهيز الرسائل للنموذج (مع إضافة الذاكرة)
+        messages_payload = [
             {
                 "role": "system",
-                "content": "أنت مساعد ذكاء اصطناعي متقدم. استخدم نتائج البحث المرفقة للإجابة عن أسئلة المستخدم بدقة وتنسيق ممتاز باللغة العربية."
+                "content": "أنت مساعد ذكاء اصطناعي متقدم. تتذكر سياق المحادثة المرفقة وتستخدم نتائج البحث لإجابة أسئلة المستخدم بدقة وتنسيق ممتاز باللغة العربية."
             }
         ]
 
         if search_data:
-            messages.append({
+            messages_payload.append({
                 "role": "system",
-                "content": f"نتائج البحث الأخيرة من الويب حول سؤال المستخدم:\n{search_data}"
+                "content": f"نتائج البحث الحالية من الويب (استخدمها لإجابة المستخدم عن الأسعار والأخبار):\n{search_data}"
             })
 
-        messages.append({"role": "user", "content": message.text})
+        # إضافة السجل السابق للمحادثة (آخر 8 رسائل)
+        messages_payload.extend(history[-8:])
 
-        # طلب الإجابة من الذكاء الاصطناعي
+        # إضافة الرسالة الجديدة
+        messages_payload.append({"role": "user", "content": message.text})
+
+        # استدعاء الذكاء الاصطناعي
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=messages,
+            messages=messages_payload,
             temperature=0.5,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
 
-        # تعديل الرسالة المؤقتة بنص الإجابة النهائي
-        bot.edit_message_text(answer, chat_id=message.chat.id, message_id=status_msg.message_id)
+        # تحديث الذاكرة للمستخدم
+        history.append({"role": "user", "content": message.text})
+        history.append({"role": "assistant", "content": answer})
+        chat_histories[chat_id] = history[-10:] # الاحتفاظ بآخر 10 رسائل فقط
+
+        # تعديل الرسالة بالإجابة
+        bot.edit_message_text(answer, chat_id=chat_id, message_id=status_msg.message_id)
 
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في الاتصال بالذكاء الاصطناعي:\n{str(e)}")
 
 # ==========================================
-# تشغيل البوت في الخلفية عند بدء التطبيق
+# تشغيل البوت في الخلفية
 # ==========================================
 
 @app.on_event("startup")
@@ -163,7 +179,7 @@ async def startup_event():
             print(f"Bot polling error: {e}")
     thread = threading.Thread(target=run_bot, daemon=True)
     thread.start()
-    print("✅ Telegram Bot started")
+    print("✅ Telegram Bot started with Memory")
 
 if __name__ == "__main__":
     import uvicorn

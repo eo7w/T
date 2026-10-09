@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # ==========================================
-# 🔑 إعدادات البيئة — تُقرأ من متغيرات Render أو تستخدم القيم الافتراضية
+# 🔑 إعدادات البيئة
 # ==========================================
 
 # توكن بوت تيليجرام
@@ -23,7 +23,7 @@ NVIDIA_API_KEY = os.getenv(
 # رابط واجهة NVIDIA NIM
 BASE_URL = os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1")
 
-# قائمة المعرفات المسموح لها بالاستخدام (افصل بين المعرفات بفاصلة)
+# قائمة المعرفات المسموح لها بالاستخدام
 ALLOWED_CHAT_IDS_STR = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "8952278702")
 ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") if x.strip())
 

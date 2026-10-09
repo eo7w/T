@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import urllib.request
 import urllib.parse
 import telebot
@@ -32,39 +33,75 @@ MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 # تهيئة العملاء والذاكرة
 # ==========================================
 
-app = FastAPI(title="AI Chat + Telegram Bot with Memory & Search")
+app = FastAPI(title="AI Chat + Telegram Bot with Live Prices & Search")
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 
-# قاموس لحفظ ذاكرة المحادثة لكل مستخدم
+# ذاكرة المحادثة لكل مستخدم
 chat_histories = {}
 
-# دالة البحث في الويب
-def search_web(query: str, max_results: int = 3) -> str:
+# ==========================================
+# جلب أسعار الذهب والأسواق المباشرة
+# ==========================================
+
+def get_live_market_price(query: str) -> str:
+    query_lower = query.lower()
+    symbol = None
+    name = ""
+
+    if any(k in query_lower for k in ["xau", "xauusd", "ذهب", "gold"]):
+        symbol = "GC=F"
+        name = "الذهب (XAU/USD)"
+    elif any(k in query_lower for k in ["btc", "bitcoin", "بيتكوين"]):
+        symbol = "BTC-USD"
+        name = "البيتكوين (BTC/USD)"
+    elif any(k in query_lower for k in ["eurusd", "يورو"]):
+        symbol = "EURUSD=X"
+        name = "اليورو مقابل الدولار (EUR/USD)"
+
+    if not symbol:
+        return ""
+
     try:
-        url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({'q': query})
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            meta = data['chart']['result'][0]['meta']
+            price = meta.get('regularMarketPrice')
+            currency = meta.get('currency', 'USD')
+            return f"📊 السعر المباشر اللحظي لـ {name}: {price} {currency}"
+    except Exception as e:
+        print(f"Market price fetch error: {e}")
+        return ""
+
+# ==========================================
+# محرك البحث العام في الويب
+# ==========================================
+
+def search_web(query: str, max_results: int = 3) -> str:
+    # 1. فحص الأسواق أولاً
+    market_price = get_live_market_price(query)
+    if market_price:
+        return market_price
+
+    # 2. البحث النصي في Bing / DuckDuckGo Lite
+    try:
+        url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode({'q': query})
         req = urllib.request.Request(
             url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         )
         with urllib.request.urlopen(req, timeout=8) as response:
             html = response.read().decode('utf-8', errors='ignore')
-            titles = re.findall(r'<a class="result__a"[^>]*>(.*?)</a>', html, re.DOTALL)
-            snippets = re.findall(r'<a class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
-            
-            clean_titles = [re.sub(r'<[^>]+>', '', t).strip() for t in titles]
+            snippets = re.findall(r'<td class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
             clean_snippets = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets]
-            
-            results = []
-            for i in range(min(max_results, len(clean_snippets))):
-                title = clean_titles[i] if i < len(clean_titles) else ""
-                snippet = clean_snippets[i]
-                results.append(f"العنوان: {title}\nالمحتوى: {snippet}")
-                
-            return "\n\n".join(results)
+            if clean_snippets:
+                return "\n\n".join(clean_snippets[:max_results])
     except Exception as e:
         print(f"Search error: {e}")
-        return ""
+
+    return ""
 
 # ==========================================
 # واجهة الويب
@@ -75,7 +112,7 @@ async def root():
     return """
     <html>
         <body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1a1a2e; color: white;">
-            <h1>✅ AI Chat Bot — يعمل مع الذاكرة والبحث</h1>
+            <h1>✅ AI Chat Bot — يعمل مع الذاكرة والأسعار المباشرة</h1>
         </body>
     </html>
     """
@@ -93,7 +130,7 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً بك! أنا مزود بذاكرة تترابط مع محادثاتنا ومحرك بحث للويب.\nأرسل /clear لمسح الذاكرة وتغيير الموضوع.")
+    bot.reply_to(message, "👋 أهلاً بك! أنا أبحث في الويب وأجلب أسعار الذهب والأسواق المباشرة.\nأرسل /clear لمسح الذاكرة.")
 
 @bot.message_handler(commands=["clear", "reset"])
 def clear_memory(message):
@@ -110,56 +147,53 @@ def handle_message(message):
         return
 
     try:
-        status_msg = bot.reply_to(message, "🔍 جاري التفكير والبحث...")
+        status_msg = bot.reply_to(message, "🔍 جاري التفكير والجلب المباشر...")
 
-        # الحصول على ذاكرة المستخدم الحالية
+        # الذاكرة
         history = chat_histories.get(chat_id, [])
 
-        # تحديد جملة البحث: إذا كانت الرسالة قصيرة، يتم إرفاق آخر موضوع تحدث عنه
+        # تحديد نص البحث المدمج مع الذاكرة
         search_query = message.text
-        if len(message.text.split()) <= 5 and history:
+        if len(message.text.split()) <= 4 and history:
             last_user_msgs = [m["content"] for m in history if m["role"] == "user"]
             if last_user_msgs:
                 search_query = f"{last_user_msgs[-1]} {message.text}"
 
-        # إجراء البحث في الويب
+        # جلب بيانات البحث أو الأسعار المباشرة
         search_data = search_web(search_query)
 
-        # تجهيز الرسائل للنموذج (مع إضافة الذاكرة)
+        # تجهيز الرسائل للنموذج
         messages_payload = [
             {
                 "role": "system",
-                "content": "أنت مساعد ذكاء اصطناعي متقدم. تتذكر سياق المحادثة المرفقة وتستخدم نتائج البحث لإجابة أسئلة المستخدم بدقة وتنسيق ممتاز باللغة العربية."
+                "content": "أنت مساعد ذكاء اصطناعي متقدم وخبير في الأسواق المباشرة. إذا تم تزويدك بسعر مباشر أو نتائج بحث، استخدم السعر الموجود وقدمه للمستخدم مباشرة بثقة وبدون الاعتذار أو طلب البحث منه."
             }
         ]
 
         if search_data:
             messages_payload.append({
                 "role": "system",
-                "content": f"نتائج البحث الحالية من الويب (استخدمها لإجابة المستخدم عن الأسعار والأخبار):\n{search_data}"
+                "content": f"بيانات السوق وسعر الويب المباشر:\n{search_data}"
             })
 
-        # إضافة السجل السابق للمحادثة (آخر 8 رسائل)
-        messages_payload.extend(history[-8:])
-
-        # إضافة الرسالة الجديدة
+        # إضافة آخر 6 رسائل من الذاكرة
+        messages_payload.extend(history[-6:])
         messages_payload.append({"role": "user", "content": message.text})
 
-        # استدعاء الذكاء الاصطناعي
+        # طلب الإجابة من الذكاء الاصطناعي
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_payload,
-            temperature=0.5,
+            temperature=0.3,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
 
-        # تحديث الذاكرة للمستخدم
+        # تحديث الذاكرة
         history.append({"role": "user", "content": message.text})
         history.append({"role": "assistant", "content": answer})
-        chat_histories[chat_id] = history[-10:] # الاحتفاظ بآخر 10 رسائل فقط
+        chat_histories[chat_id] = history[-10:]
 
-        # تعديل الرسالة بالإجابة
         bot.edit_message_text(answer, chat_id=chat_id, message_id=status_msg.message_id)
 
     except Exception as e:
@@ -179,7 +213,7 @@ async def startup_event():
             print(f"Bot polling error: {e}")
     thread = threading.Thread(target=run_bot, daemon=True)
     thread.start()
-    print("✅ Telegram Bot started with Memory")
+    print("✅ Telegram Bot started with Live Prices")
 
 if __name__ == "__main__":
     import uvicorn

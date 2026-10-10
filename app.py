@@ -30,12 +30,11 @@ ALLOWED_CHAT_IDS = set(int(x.strip()) for x in ALLOWED_CHAT_IDS_STR.split(",") i
 MODEL_NAME = os.getenv("MODEL_NAME", "z-ai/glm-5.3")
 
 # ==========================================
-# تهيئة العملاء بدون قيود parse_mode
+# تهيئة العملاء والذاكرة
 # ==========================================
 
 app = FastAPI(title="AI Chat + Trading Bot")
 
-# إزالة parse_mode لضمان عدم رفض الرسائل من تيليجرام
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 client = OpenAI(base_url=BASE_URL, api_key=NVIDIA_API_KEY)
 
@@ -130,7 +129,7 @@ def send_welcome(message):
     if message.chat.id not in ALLOWED_CHAT_IDS:
         bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
         return
-    bot.reply_to(message, "👋 أهلاً بك! أنا جاهز لمساعدتك في التداول والإجابة عن أسئلتك.\nأرسل /clear لمسح الذاكرة.")
+    bot.reply_to(message, "👋 أهلاً بك! يمكنك مناقشتي في أي موضوع أو سؤال بحرية تامة وبدون قيود، بالإضافة إلى تقديم توصيات التداول.\nأرسل /clear لمسح الذاكرة.")
 
 @bot.message_handler(commands=["clear", "reset"])
 def clear_memory(message):
@@ -148,7 +147,7 @@ def handle_message(message):
 
     status_msg = None
     try:
-        status_msg = bot.reply_to(message, "💬 جاري المعالجة والتحليل...")
+        status_msg = bot.reply_to(message, "💬 جاري المعالجة...")
 
         history = chat_histories.get(chat_id, [])
 
@@ -160,9 +159,11 @@ def handle_message(message):
 
         search_data = search_web(search_query)
 
+        # شخصية ذكاء اصطناعي مرفتحة ومفتوحة بدون قيود أو وعظ
         system_prompt = (
-            "أنت مساعد ذكاء اصطناعي ومحلل تداول محترف وصديق شخصي للمستخدم.\n"
-            "قدم توصيات صفقات واضحة تشمل (دخول، أهداف، وقف خسارة) بناءً على السعر المباشر المرفق."
+            "أنت مساعد ذكاء اصطناعي وصديق شخصي ومحلل تداول محترف للمستخدم.\n"
+            "أنت مرن ومنفتح تماماً في الحوار، وتجيب عن جميع الأسئلة والمواضيع التي يطرحها المستخدم بصراحة وبدون قيود أو محاضرة أخلاقية أو إطلاق أحكام.\n"
+            "عندما يطلب المستخدم تحليل صفقات، قدم له توصيات واضحة (دخول، أهداف، وقف خسارة) بناءً على السعر المباشر المرفق."
         )
 
         messages_payload = [{"role": "system", "content": system_prompt}]
@@ -173,13 +174,13 @@ def handle_message(message):
                 "content": f"بيانات وسعر السوق المباشر الآن:\n{search_data}"
             })
 
-        messages_payload.extend(history[-20:])
+        messages_payload.extend(history[-5:])
         messages_payload.append({"role": "user", "content": message.text})
 
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages_payload,
-            temperature=0.4,
+            temperature=0.7,
             max_tokens=1024
         )
         answer = response.choices[0].message.content or "لم أستطع الحصول على إجابة."
